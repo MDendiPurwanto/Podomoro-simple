@@ -1,0 +1,310 @@
+<script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+            try {
+                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                var firstSheetName = workbook.SheetNames[0];
+                var worksheet = workbook.Sheets[firstSheetName];
+
+                // Convert sheet to JSON to filter blank rows
+                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                // Filter out blank rows (rows where all cells are empty, null, or undefined)
+                var filteredData = jsonData.filter(row => row.some(filledCell));
+
+                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+                var headerRowIndex = filteredData.findIndex((row, index) =>
+                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                );
+                // Fallback
+                if (headerRowIndex === -1 || headerRowIndex > 25) {
+                  headerRowIndex = 0;
+                }
+
+                // Convert filtered JSON back to CSV
+                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                return csv;
+            } catch (e) {
+                console.error(e);
+                return "";
+            }
+        }
+        return gk_fileData[filename] || "";
+        }
+        </script><!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pomodoro Timer</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gradient-to-br from-blue-100 to-purple-100 flex items-center justify-center min-h-screen">
+  <div id="root"></div>
+  <audio id="session-end-sound" src="https://cdn.pixabay.com/audio/2022/01/18/audio_d3b534e3c6.mp3"></audio>
+  <script>
+    const { useState, useEffect } = React;
+
+    function Pomodoro() {
+      const [workTime, setWorkTime] = useState(25);
+      const [breakTime, setBreakTime] = useState(5);
+      const [time, setTime] = useState(workTime * 60);
+      const [isActive, setIsActive] = useState(false);
+      const [isWorkSession, setIsWorkSession] = useState(true);
+      const [sessionCount, setSessionCount] = useState({ work: 0, break: 0 });
+      const [showModal, setShowModal] = useState(false);
+      const [showBreakOverlay, setShowBreakOverlay] = useState(false);
+
+      useEffect(() => {
+        let interval = null;
+        if (isActive && time > 0) {
+          interval = setInterval(() => {
+            setTime((prevTime) => prevTime - 1);
+          }, 1000);
+        } else if (time === 0) {
+          setSessionCount((prev) => ({
+            ...prev,
+            [isWorkSession ? 'work' : 'break']: prev[isWorkSession ? 'work' : 'break'] + 1,
+          }));
+          const sound = document.getElementById('session-end-sound');
+          sound.play().catch((error) => console.log('Error playing sound:', error));
+
+          if (isWorkSession) {
+            // Sesi kerja selesai: mulai istirahat otomatis
+            setIsWorkSession(false);
+            setTime(breakTime * 60);
+            setIsActive(true); // Mulai timer istirahat langsung
+            setShowBreakOverlay(true);
+            setShowModal(true); // Tampilkan modal notifikasi
+            // Masuk ke mode fullscreen untuk overlay
+            if (document.documentElement.requestFullscreen) {
+              document.documentElement.requestFullscreen().catch((e) => console.log('Fullscreen error:', e));
+            }
+          } else {
+            // Sesi istirahat selesai
+            setIsWorkSession(true);
+            setTime(workTime * 60);
+            setIsActive(false); // Berhenti untuk menunggu pengguna memulai sesi kerja
+            setShowBreakOverlay(false);
+            setShowModal(true);
+            // Keluar dari mode fullscreen
+            if (document.fullscreenElement && document.exitFullscreen) {
+              document.exitFullscreen().catch((e) => console.log('Exit fullscreen error:', e));
+            }
+          }
+        }
+        return () => clearInterval(interval);
+      }, [isActive, time, isWorkSession, workTime, breakTime]);
+
+      const formatTime = (seconds) => {
+        const minutes = Math.floor(seconds / 60);
+        const secs = seconds % 60;
+        return `${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+      };
+
+      const handleStartPause = () => {
+        setIsActive(!isActive);
+      };
+
+      const handleReset = () => {
+        setIsActive(false);
+        setTime(isWorkSession ? workTime * 60 : breakTime * 60);
+        setShowBreakOverlay(false);
+        if (document.fullscreenElement && document.exitFullscreen) {
+          document.exitFullscreen().catch((e) => console.log('Exit fullscreen error:', e));
+        }
+      };
+
+      const handleSessionSwitch = (sessionType) => {
+        setIsActive(false);
+        setIsWorkSession(sessionType === 'work');
+        setTime(sessionType === 'work' ? workTime * 60 : breakTime * 60);
+        setShowBreakOverlay(false);
+        if (document.fullscreenElement && document.exitFullscreen) {
+          document.exitFullscreen().catch((e) => console.log('Exit fullscreen error:', e));
+        }
+      };
+
+      const handleTimeChange = (type, value) => {
+        if (value < 1 || isNaN(value)) return;
+        if (type === 'work') {
+          setWorkTime(value);
+          if (isWorkSession) setTime(value * 60);
+        } else {
+          setBreakTime(value);
+          if (!isWorkSession) setTime(value * 60);
+        }
+      };
+
+      const closeModal = () => {
+        setShowModal(false);
+      };
+
+      return React.createElement(
+        'div',
+        { className: 'bg-white p-6 rounded-xl shadow-2xl max-w-md w-full mx-4 relative' },
+        [
+          React.createElement('h1', { className: 'text-3xl font-bold text-center text-gray-800 mb-6' }, 'Pomodoro Timer'),
+          // Session Selector
+          React.createElement(
+            'div',
+            { className: 'flex justify-center gap-2 mb-6' },
+            [
+              React.createElement(
+                'button',
+                {
+                  onClick: () => handleSessionSwitch('work'),
+                  className: `px-4 py-2 rounded-lg font-semibold transition-colors ${
+                    isWorkSession ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-700'
+                  }`,
+                  disabled: showBreakOverlay,
+                },
+                'Kerja'
+              ),
+              React.createElement(
+                'button',
+                {
+                  onClick: () => handleSessionSwitch('break'),
+                  className: `px-4 py-2 rounded-lg font-semibold transition-colors ${
+                    !isWorkSession ? 'bg-green-500 text-white' : 'bg-gray-200 text-gray-700'
+                  }`,
+                  disabled: showBreakOverlay,
+                },
+                'Istirahat'
+              ),
+            ]
+          ),
+          // Timer Display
+          React.createElement(
+            'div',
+            { className: 'text-6xl font-mono text-center text-gray-800 mb-6 animate-pulse' },
+            formatTime(time)
+          ),
+          // Controls
+          React.createElement(
+            'div',
+            { className: 'flex justify-center gap-4 mb-6' },
+            [
+              React.createElement(
+                'button',
+                {
+                  onClick: handleStartPause,
+                  className: 'bg-blue-500 text-white px-6 py-2 rounded-lg hover:bg-blue-600 transition-colors',
+                  disabled: showBreakOverlay,
+                },
+                isActive ? 'Pause' : 'Start'
+              ),
+              React.createElement(
+                'button',
+                {
+                  onClick: handleReset,
+                  className: 'bg-red-500 text-white px-6 py-2 rounded-lg hover:bg-red-600 transition-colors',
+                  disabled: showBreakOverlay,
+                },
+                'Reset'
+              ),
+            ]
+          ),
+          // Time Settings
+          React.createElement(
+            'div',
+            { className: 'grid grid-cols-2 gap-4 mb-6' },
+            [
+              React.createElement(
+                'div',
+                null,
+                [
+                  React.createElement('label', { className: 'block text-sm font-medium text-gray-700' }, 'Waktu Kerja (menit)'),
+                  React.createElement('input', {
+                    type: 'number',
+                    value: workTime,
+                    onChange: (e) => handleTimeChange('work', parseInt(e.target.value)),
+                    className: 'mt-1 w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500',
+                    min: '1',
+                    disabled: showBreakOverlay,
+                  }),
+                ]
+              ),
+              React.createElement(
+                'div',
+                null,
+                [
+                  React.createElement('label', { className: 'block text-sm font-medium text-gray-700' }, 'Waktu Istirahat (menit)'),
+                  React.createElement('input', {
+                    type: 'number',
+                    value: breakTime,
+                    onChange: (e) => handleTimeChange('break', parseInt(e.target.value)),
+                    className: 'mt-1 w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500',
+                    min: '1',
+                    disabled: showBreakOverlay,
+                  }),
+                ]
+              ),
+            ]
+          ),
+          // Session History
+          React.createElement(
+            'div',
+            { className: 'text-center text-sm text-gray-600' },
+            [
+              React.createElement('p', null, `Sesi Kerja Selesai: ${sessionCount.work}`),
+              React.createElement('p', null, `Sesi Istirahat Selesai: ${sessionCount.break}`),
+            ]
+          ),
+          // Modal for Session End
+          showModal &&
+            React.createElement(
+              'div',
+              { className: 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50' },
+              React.createElement(
+                'div',
+                { className: 'bg-white p-6 rounded-lg shadow-lg max-w-sm w-full' },
+                [
+                  React.createElement(
+                    'h2',
+                    { className: 'text-xl font-bold mb-4' },
+                    isWorkSession ? 'Sesi Kerja Selesai!' : 'Sesi Istirahat Selesai!'
+                  ),
+                  React.createElement('p', { className: 'mb-4' }, `Waktunya ${isWorkSession ? 'istirahat' : 'kembali bekerja'}!`),
+                  React.createElement(
+                    'button',
+                    {
+                      onClick: closeModal,
+                      className: 'bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600',
+                    },
+                    'OK'
+                  ),
+                ]
+              )
+            ),
+          // Break Overlay
+          showBreakOverlay &&
+            React.createElement(
+              'div',
+              { className: 'fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50' },
+              React.createElement(
+                'div',
+                { className: 'text-center text-white' },
+                [
+                  React.createElement('h2', { className: 'text-4xl font-bold mb-4' }, 'Waktu Istirahat!'),
+                  React.createElement('p', { className: 'text-2xl mb-4' }, 'Ambil napas, rileks, dan nikmati waktu ini.'),
+                  React.createElement('div', { className: 'text-5xl font-mono' }, formatTime(time)),
+                ]
+              )
+            ),
+        ]
+      );
+    }
+
+    ReactDOM.render(React.createElement(Pomodoro), document.getElementById('root'));
+  </script>
+</body>
+</html>
